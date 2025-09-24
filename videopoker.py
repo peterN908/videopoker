@@ -74,6 +74,8 @@ PAYTABLE_ORDER: tuple[str, ...] = (
     "high_card",
 )
 DEFAULT_NUM_HANDS = 200
+DEFAULT_PROMPT_STYLE = "standard"
+ALT_PROMPT_STYLE = "dsl"
 
 # Penalty configuration: encourage correct formatting and concise outputs by
 # subtracting from the reward when completions violate requirements. Correct
@@ -122,6 +124,7 @@ def build_video_poker_dataset(
     num_hands: int = DEFAULT_NUM_HANDS,
     seed: int | None = None,
     paytable: dict[str, int] | None = None,
+    prompt_style: str = DEFAULT_PROMPT_STYLE,
 ) -> Dataset:
     """Create a dataset of random single-turn video poker prompts."""
 
@@ -134,7 +137,9 @@ def build_video_poker_dataset(
         hand = tuple(rng.sample(FULL_DECK, 5))
         prompts.append(
             {
-                "prompt": [_format_prompt(hand, active_paytable)],
+                "prompt": [
+                    _format_prompt(hand, active_paytable, prompt_style)
+                ],
                 "answer": "",
                 "task": "video_poker",
                 "info": {
@@ -146,25 +151,46 @@ def build_video_poker_dataset(
     return Dataset.from_list(prompts)
 
 
-def _format_prompt(hand: Sequence[str], paytable: dict[str, int]) -> dict[str, str]:
+def _format_prompt(
+    hand: Sequence[str], paytable: dict[str, int], prompt_style: str
+) -> dict[str, str]:
     hand_lines = "\n".join(f"{idx}: {card}" for idx, card in enumerate(hand))
     paytable_lines = "\n".join(
         f"{PAYTABLE_DISPLAY_NAMES.get(key, key.replace('_', ' ').title())}: {paytable[key]}"
         for key in PAYTABLE_ORDER
         if key in paytable
     )
-    content = (
-        "You are playing a single-hand game of Jacks or Better video poker.\n"
-        "Your current five-card hand (index: card) is:\n"
-        f"{hand_lines}\n\n"
-        "Payout table (per 1 credit wagered):\n"
-        f"{paytable_lines}\n\n"
-        "Think step-by-step about which cards to hold inside <think>...</think> tags.\n"
-        "After thinking, provide your final decision inside <answer>...</answer> tags.\n"
-        "Format the content of <answer> exactly as `HOLD: i j k` with indices in ascending order.\n"
-        "Use zero-based indices. If you will discard all cards, respond with `<answer>HOLD:</answer>`.\n"
-        "Do not include any other text outside the required tags. The environment will compute the expected value of your decision."
-    )
+    if prompt_style == ALT_PROMPT_STYLE:
+        content = (
+            "You are playing a single-hand game of Jacks or Better video poker.\n"
+            "Your current five-card hand (index: card) is:\n"
+            f"{hand_lines}\n\n"
+            "Payout table (per 1 credit wagered):\n"
+            f"{paytable_lines}\n\n"
+            "Inside <think> use PokerDSL v1 EXACTLY as specified below, one line per field, no extra words, ≤100 tokens:\n\n"
+            "H: <5 cards>\n"
+            "RC: <rank counts as (R×n)...>\n"
+            "SC: <suit counts as (♠×a)(♥×b)(♦×c)(♣×d)>\n"
+            "C: <up to 5 candidate holds as [i ...] ... always include pairs/3K/2P/4F/4SF/4RF/3RF/OESD/ISD>\n"
+            "S: <scores as {[i ...]: tier,outs} corresponding to C; tier ∈ [PAT,4RF,4SF,3K,2P,HP,4F,LP,OESD,ISD,HC]>\n"
+            "B: <best indices only>\n\n"
+            "After </think>, output <answer>HOLD: i j k</answer> using ascending zero-based indices.\n"
+            "Leave the indices empty (i.e., `<answer>HOLD:</answer>`) if discarding all cards.\n"
+            "No other text outside the required tags."
+        )
+    else:
+        content = (
+            "You are playing a single-hand game of Jacks or Better video poker.\n"
+            "Your current five-card hand (index: card) is:\n"
+            f"{hand_lines}\n\n"
+            "Payout table (per 1 credit wagered):\n"
+            f"{paytable_lines}\n\n"
+            "Think step-by-step about which cards to hold inside <think>...</think> tags.\n"
+            "After thinking, provide your final decision inside <answer>...</answer> tags.\n"
+            "Format the content of <answer> exactly as `HOLD: i j k` with indices in ascending order.\n"
+            "Use zero-based indices. If you will discard all cards, respond with `<answer>HOLD:</answer>`.\n"
+            "Do not include any other text outside the required tags. The environment will compute the expected value of your decision."
+        )
     return {"role": "user", "content": content}
 
 
@@ -356,6 +382,7 @@ def load_environment(
     rubric: Rubric | None = None,
     num_hands: int = DEFAULT_NUM_HANDS,
     seed: int | None = None,
+    prompt_style: str = DEFAULT_PROMPT_STYLE,
     **kwargs,
 ) -> vf.Environment:
     """Instantiate the video poker environment."""
@@ -363,7 +390,10 @@ def load_environment(
     paytable_dict = dict(paytable or DEFAULT_PAYTABLE)
     if dataset is None:
         dataset = build_video_poker_dataset(
-            num_hands=num_hands, seed=seed, paytable=paytable_dict
+            num_hands=num_hands,
+            seed=seed,
+            paytable=paytable_dict,
+            prompt_style=prompt_style,
         )
     if rubric is None:
         rubric = Rubric(
