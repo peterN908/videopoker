@@ -75,6 +75,13 @@ PAYTABLE_ORDER: tuple[str, ...] = (
 )
 DEFAULT_NUM_HANDS = 200
 
+# Penalty configuration: encourage correct formatting and concise outputs by
+# subtracting from the reward when completions violate requirements. Correct
+# behaviour does not earn bonus reward.
+FORMAT_MISS_PENALTY = 0.5
+LONG_COMPLETION_CHAR_THRESHOLD = 2048
+LONG_COMPLETION_PENALTY = 0.2
+
 INDEX_PATTERN = re.compile(r"[0-4]")
 ANSWER_TAG_PATTERN = re.compile(r"<answer>(.*?)</answer>", re.IGNORECASE | re.DOTALL)
 THINK_TAG_PATTERN = re.compile(r"<think>(.*?)</think>", re.IGNORECASE | re.DOTALL)
@@ -227,9 +234,20 @@ def video_poker_reward(
     action_text = _extract_answer_text(completion_text)
     hold_indices = parse_hold_indices(action_text, hand_size=len(hand_cards))
     think_segments = extract_think_texts(completion_text)
+
+    penalties: dict[str, float] = {
+        "format": 0.0,
+        "length": 0.0,
+    }
+    if not ANSWER_TAG_PATTERN.search(completion_text):
+        penalties["format"] = -FORMAT_MISS_PENALTY
+    if len(completion_text) > LONG_COMPLETION_CHAR_THRESHOLD:
+        penalties["length"] = -LONG_COMPLETION_PENALTY
+
     expected_value = compute_expected_value(
         tuple(hand_cards), tuple(hold_indices), paytable
     )
+    total_reward = expected_value + sum(penalties.values())
     held_cards = [hand_cards[idx] for idx in hold_indices]
     state["parsed_action"] = {
         "text": action_text,
@@ -239,7 +257,9 @@ def video_poker_reward(
     }
     state["raw_completion_text"] = completion_text.strip()
     state["expected_value"] = expected_value
-    return expected_value
+    state["reward_penalties"] = penalties
+    state["total_reward"] = total_reward
+    return total_reward
 
 
 def compute_expected_value(

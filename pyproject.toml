@@ -1,6 +1,6 @@
 [project]
 name = "videopoker"
-description = "Your environment description here"
+description = "Video Poker card game - pick the best cards"
 tags = ["placeholder-tag", "train", "eval"]
 version = "0.1.0"
 requires-python = ">=3.11"
